@@ -135,7 +135,7 @@ class ActiveQuery extends Component implements ActiveQueryInterface
 
     /**
      * Constructor.
-     * @param array $modelClass the model class associated with this query
+     * @param string $modelClass the model class associated with this query
      * @param array $config configurations to be applied to the newly created query object
      */
     public function __construct($modelClass, $config = [])
@@ -164,6 +164,10 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      */
     public function all($db = null)
     {
+        if ($this->emulateExecution) {
+            return [];
+        }
+
         // TODO add support for orderBy
         $data = $this->executeScript($db, 'All');
         if (empty($data)) {
@@ -206,6 +210,10 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      */
     public function one($db = null)
     {
+        if ($this->emulateExecution) {
+            return null;
+        }
+
         // TODO add support for orderBy
         $data = $this->executeScript($db, 'One');
         if (empty($data)) {
@@ -242,10 +250,14 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * @param string $q the COUNT expression. This parameter is ignored by this implementation.
      * @param Connection $db the database connection used to execute the query.
      * If this parameter is not given, the `db` application component will be used.
-     * @return integer number of records
+     * @return int number of records
      */
     public function count($q = '*', $db = null)
     {
+        if ($this->emulateExecution) {
+            return 0;
+        }
+
         if ($this->where === null) {
             /* @var $modelClass ActiveRecord */
             $modelClass = $this->modelClass;
@@ -263,10 +275,13 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * Returns a value indicating whether the query result contains any row of data.
      * @param Connection $db the database connection used to execute the query.
      * If this parameter is not given, the `db` application component will be used.
-     * @return boolean whether the query result contains any row of data.
+     * @return bool whether the query result contains any row of data.
      */
     public function exists($db = null)
     {
+        if ($this->emulateExecution) {
+            return false;
+        }
         return $this->one($db) !== null;
     }
 
@@ -279,6 +294,10 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      */
     public function column($column, $db = null)
     {
+        if ($this->emulateExecution) {
+            return [];
+        }
+
         // TODO add support for orderBy
         return $this->executeScript($db, 'Column', $column);
     }
@@ -288,10 +307,14 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * @param string $column the column to sum up
      * @param Connection $db the database connection used to execute the query.
      * If this parameter is not given, the `db` application component will be used.
-     * @return integer number of records
+     * @return int number of records
      */
     public function sum($column, $db = null)
     {
+        if ($this->emulateExecution) {
+            return 0;
+        }
+
         return $this->executeScript($db, 'Sum', $column);
     }
 
@@ -301,10 +324,13 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * Make sure you properly quote column names in the expression.
      * @param Connection $db the database connection used to execute the query.
      * If this parameter is not given, the `db` application component will be used.
-     * @return integer the average of the specified column values.
+     * @return int the average of the specified column values.
      */
     public function average($column, $db = null)
     {
+        if ($this->emulateExecution) {
+            return 0;
+        }
         return $this->executeScript($db, 'Average', $column);
     }
 
@@ -314,10 +340,13 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * Make sure you properly quote column names in the expression.
      * @param Connection $db the database connection used to execute the query.
      * If this parameter is not given, the `db` application component will be used.
-     * @return integer the minimum of the specified column values.
+     * @return int the minimum of the specified column values.
      */
     public function min($column, $db = null)
     {
+        if ($this->emulateExecution) {
+            return null;
+        }
         return $this->executeScript($db, 'Min', $column);
     }
 
@@ -327,10 +356,13 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * Make sure you properly quote column names in the expression.
      * @param Connection $db the database connection used to execute the query.
      * If this parameter is not given, the `db` application component will be used.
-     * @return integer the maximum of the specified column values.
+     * @return int the maximum of the specified column values.
      */
     public function max($column, $db = null)
     {
+        if ($this->emulateExecution) {
+            return null;
+        }
         return $this->executeScript($db, 'Max', $column);
     }
 
@@ -345,6 +377,10 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      */
     public function scalar($attribute, $db = null)
     {
+        if ($this->emulateExecution) {
+            return null;
+        }
+
         $record = $this->one($db);
         if ($record !== null) {
             return $record->hasAttribute($attribute) ? $record->$attribute : null;
@@ -360,7 +396,7 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * @param string $type the type of the script to generate
      * @param string $columnName
      * @throws NotSupportedException
-     * @return array|boolean|null|string
+     * @return array|bool|null|string
      */
     protected function executeScript($db, $type, $columnName = null)
     {
@@ -388,10 +424,6 @@ class ActiveQuery extends Component implements ActiveQueryInterface
             }
         }
 
-        if (!empty($this->orderBy)) {
-            throw new NotSupportedException('orderBy is currently not supported by redis ActiveRecord.');
-        }
-
         /* @var $modelClass ActiveRecord */
         $modelClass = $this->modelClass;
 
@@ -400,7 +432,10 @@ class ActiveQuery extends Component implements ActiveQueryInterface
         }
 
         // find by primary key if possible. This is much faster than scanning all records
-        if (is_array($this->where) && !isset($this->where[0]) && $modelClass::isPrimaryKey(array_keys($this->where))) {
+        if (is_array($this->where) && (
+                !isset($this->where[0]) && $modelClass::isPrimaryKey(array_keys($this->where)) ||
+                isset($this->where[0]) && $this->where[0] === 'in' && $modelClass::isPrimaryKey((array) $this->where[1])
+            )) {
             return $this->findByPk($db, $type, $columnName);
         }
 
@@ -416,13 +451,34 @@ class ActiveQuery extends Component implements ActiveQueryInterface
      * If this parameter is not given, the `db` application component will be used.
      * @param string $type the type of the script to generate
      * @param string $columnName
-     * @return array|boolean|null|string
+     * @return array|bool|null|string
      * @throws \yii\base\InvalidParamException
      * @throws \yii\base\NotSupportedException
      */
     private function findByPk($db, $type, $columnName = null)
     {
-        if (count($this->where) == 1) {
+        $needSort = !empty($this->orderBy) && in_array($type, ['All', 'One', 'Column']);
+        if ($needSort) {
+            if (!is_array($this->orderBy) || count($this->orderBy) > 1) {
+                throw new NotSupportedException(
+                    'orderBy by multiple columns is not currently supported by redis ActiveRecord.'
+                );
+            }
+
+            $k = key($this->orderBy);
+            $v = $this->orderBy[$k];
+            if (is_numeric($k)) {
+                $orderColumn = $v;
+                $orderType = SORT_ASC;
+            } else {
+                $orderColumn = $k;
+                $orderType = $v;
+            }
+        }
+
+        if (isset($this->where[0]) && $this->where[0] === 'in') {
+            $pks = (array) $this->where[2];
+        } elseif (count($this->where) == 1) {
             $pks = (array) reset($this->where);
         } else {
             foreach ($this->where as $values) {
@@ -437,28 +493,44 @@ class ActiveQuery extends Component implements ActiveQueryInterface
         /* @var $modelClass ActiveRecord */
         $modelClass = $this->modelClass;
 
-        if ($type == 'Count') {
+        if ($type === 'Count') {
             $start = 0;
             $limit = null;
         } else {
-            $start = $this->offset === null ? 0 : $this->offset;
-            $limit = $this->limit;
+            $start = ($this->offset === null || $this->offset < 0) ? 0 : $this->offset;
+            $limit = ($this->limit < 0) ? null : $this->limit;
         }
         $i = 0;
         $data = [];
+        $orderArray = [];
         foreach ($pks as $pk) {
             if (++$i > $start && ($limit === null || $i <= $start + $limit)) {
                 $key = $modelClass::keyPrefix() . ':a:' . $modelClass::buildKey($pk);
                 $result = $db->executeCommand('HGETALL', [$key]);
                 if (!empty($result)) {
                     $data[] = $result;
+                    if ($needSort) {
+                        $orderArray[] = $db->executeCommand('HGET', [$key, $orderColumn]);
+                    }
                     if ($type === 'One' && $this->orderBy === null) {
                         break;
                     }
                 }
             }
         }
-        // TODO support orderBy
+
+        if ($needSort) {
+            $resultData = [];
+            if ($orderType === SORT_ASC) {
+                asort($orderArray, SORT_NATURAL);
+            } else {
+                arsort($orderArray, SORT_NATURAL);
+            }
+            foreach ($orderArray as $orderKey => $orderItem) {
+                $resultData[] = $data[$orderKey];
+            }
+            $data = $resultData;
+        }
 
         switch ($type) {
             case 'All':
